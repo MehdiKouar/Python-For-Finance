@@ -5,8 +5,8 @@ app = Flask(__name__)
 
 
 @app.route('/price_stale')
-def price_stale():
-    return analyse.find_stale_days()
+def find_stale_days():
+    return analyse.proba_recovery()
 
 
 if __name__ == '__main__':

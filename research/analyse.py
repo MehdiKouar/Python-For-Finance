@@ -2,14 +2,14 @@ import pandas as pd
 from data import query
 
 
-def find_stale_days():
-
+def proba_recovery():
     results = []
-
     tickers = query.get_ticker()
 
-    for ticker in tickers:
+    alpha_prior = 1
+    beta_prior = 1
 
+    for ticker in tickers:
         close_price = query.get_price(ticker)
 
         if close_price.empty:
@@ -38,12 +38,17 @@ def find_stale_days():
                 else:
                     no_recovery_count += 1
 
+        alpha_posterior = alpha_prior + recovery_count
+        beta_posterior = beta_prior + no_recovery_count
+        probability_recovery = alpha_posterior / (alpha_posterior + beta_posterior)
+
         results.append({
-            'Ticker': ticker,
+            'Ticker': ticker[0],
             'Average Decline (%)': average_decline,
             'Max Decline (%)': max_decline,
             'Recovery Count': recovery_count,
-            'No Recovery Count': no_recovery_count
+            'No Recovery Count': no_recovery_count,
+            'Probability Recovery >1% in 30 Days': probability_recovery
         })
 
     results_df = pd.DataFrame(results)
