@@ -2,7 +2,8 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from data import query
 
-def buy_stale_days():
+
+def backtest_stale_days():
     results = []
     trades_log = []  # List to store trade details for CSV export
     tickers = query.get_ticker()
@@ -82,19 +83,27 @@ def buy_stale_days():
                 shares = capital_after_entry_fee / buy_price
                 position_open = True  # Mark that a position is now open
 
-                # Look ahead 30 days to determine sell price
-                future_prices = close_price['Close'].iloc[i + 1:i + 31]
+                # Look ahead 36 days to determine sell price
+                future_prices = close_price['Close'].iloc[i + 1:i + 37]
 
                 sell_price = None
                 exit_date = None
                 for j, future_price in enumerate(future_prices):
+                    # Check for recovery condition (1% gain)
                     if future_price >= buy_price * 1.01:
                         sell_price = future_price - transaction_cost
                         recovery_count += 1
                         exit_date = future_prices.index[j]  # Record exit date
                         break
 
-                # If no recovery, sell at the last price in the 30-day window
+                    # Check for stop-loss condition (9% loss)
+                    if future_price <= buy_price * 0.9:
+                        sell_price = future_price - transaction_cost
+                        no_recovery_count += 1
+                        exit_date = future_prices.index[j]  # Record exit date
+                        break
+
+                # If no recovery or stop-loss triggered, sell at the last price in the 30-day window
                 if sell_price is None:
                     sell_price = future_prices.iloc[-1] - transaction_cost if not future_prices.empty else buy_price
                     no_recovery_count += 1
