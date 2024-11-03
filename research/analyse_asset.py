@@ -52,7 +52,8 @@ def find_resilient_asset():
     return results_html
 
 
-def analyze_recovery_days():
+
+def calculate_recovery_days():
     results = []
     tickers = query.get_ticker()
 
@@ -66,36 +67,49 @@ def analyze_recovery_days():
             print(f"No data available for {ticker}")
             continue
 
-        # Set index to Date and calculate daily percentage change
+        # Ensure 'Date' column is datetime and set as index
+        close_price['Date'] = pd.to_datetime(close_price['Date'])
         close_price.set_index('Date', inplace=True)
+
+        # Calculate daily percentage change
         close_price['Daily Change'] = close_price['Close'].pct_change() * 100
 
-        # Identify consecutive down days and total percentage drop for those days
+        # Identify consecutive down days with a total drop > 1%
         close_price['Down Day'] = close_price['Daily Change'] < 0
-        close_price['Two Day Decline'] = (close_price['Down Day'] & close_price['Down Day'].shift(1))
-        close_price['Two Day Drop %'] = close_price['Daily Change'] + close_price['Daily Change'].shift(1)
+        close_price['Two Day Decline'] = (close_price['Down Day'] &
+                                          close_price['Down Day'].shift(1) &
+                                          (close_price['Daily Change'] + close_price['Daily Change'].shift(1) < -1))
 
-        # Find periods where there's a two-day decline greater than 1%
-        decline_periods = close_price[close_price['Two Day Decline'] & (close_price['Two Day Drop %'] < -1)]
+        # Display identified decline periods for debugging
+        decline_periods = close_price[close_price['Two Day Decline']]
+        print(f"\nDecline periods for {ticker[0]}:")
+        print(decline_periods[['Close', 'Daily Change']])
 
-        recovery_days_list = []  # List to store recovery days for each period
+        recovery_days_list = []  # List to store recovery days for each decline period
 
-        # Analyze each decline period
+        # Analyze each two-day decline period
         for start_date in decline_periods.index:
             start_price = close_price.loc[start_date, 'Close']
-            future_prices = close_price['Close'].loc[start_date:]
+            future_prices = close_price['Close'].loc[start_date:].sort_index()  # Sort future prices in ascending order
+
+            print(f"\nAnalyzing decline starting on {start_date} with start price {start_price} for ticker {ticker[0]}")
 
             # Find the first day in the future where there's a 1% recovery from the start price
             recovery_date = None
             for future_date, future_price in future_prices.items():
-                if future_price >= start_price * 1.01:
+                if future_price >= start_price * 1.02:
                     recovery_date = future_date
+                    print(f"  Recovery found on {recovery_date} with price {future_price}")
                     break
+                else:
+                    print(f"  No recovery on {future_date}: price {future_price}")
 
             # Calculate the number of days to recovery
-            if recovery_date:
+            if recovery_date and recovery_date > start_date:
                 days_to_recovery = (recovery_date - start_date).days
                 recovery_days_list.append(days_to_recovery)
+            else:
+                print(f"  No recovery within the future prices for start date {start_date}")
 
         # Calculate average recovery days for this ticker
         if recovery_days_list:

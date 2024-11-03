@@ -13,7 +13,7 @@ def get_ticker():
 
 def get_price(table_name):
     cur = conn.cursor()
-    cur.execute("SELECT daily_date, close FROM " + str(table_name[0]))
+    cur.execute("SELECT daily_date, close FROM " + table_name[0] + " ORDER BY daily_date ASC")
     price_result = cur.fetchall()
     conn.commit()
     cur.close()
