@@ -2,131 +2,181 @@ import pandas as pd
 from data import query
 
 
-def find_resilient_asset():
-    # Récupère tous les tickers
+def find_trend(lookback_days, sma_period):
+    results = []
     tickers = query.get_ticker()
 
-    # Liste pour stocker les résultats
-    results = []
-
-    # Boucle pour chaque ticker
     for ticker in tickers:
-        # Récupère les prix de clôture pour le ticker
+
         close_price = query.get_price(ticker)
 
-        # Vérifie que les données ne sont pas vides
         if close_price.empty:
             print(f"No data available for {ticker}")
             continue
 
-        # Convertit les données en DataFrame et fixe l'index sur la date
         df = pd.DataFrame(close_price)
         df.set_index('Date', inplace=True)
-
-        # Calcule la SMA 200
-        df['SMA_200'] = df['Close'].rolling(window=200).mean()
-
-        # Calcule le nombre de jours où le prix de clôture est supérieur à la SMA 200
-        days_above_sma = int((df['Close'] > df['SMA_200']).sum())
-
-        # Calcule le nombre total de jours de cotation
+        df = df.tail(lookback_days + sma_period - 1)
+        df[f'SMA_{sma_period}'] = df['Close'].rolling(window=sma_period).mean()
+        df = df.tail(lookback_days)
+        days_above_sma = int((df['Close'] > df[f'SMA_{sma_period}']).sum())
         total_days = int(df['Close'].count())
-
-        # Calcule le pourcentage de jours au-dessus de la SMA 200
         percentage_above_sma = float((days_above_sma / total_days) * 100) if total_days > 0 else 0.0
 
-        # Stocke le résultat dans la liste
         results.append({
             'Ticker': ticker[0],
-            'Days Above SMA 200': days_above_sma,
+            'Days Above SMA': days_above_sma,
             'Total Days': total_days,
-            'Percentage Above SMA 200 (%)': percentage_above_sma
+            f'Percentage Above SMA {sma_period} (%)': percentage_above_sma
         })
 
-    # Convertir les résultats en DataFrame
     results_df = pd.DataFrame(results)
-
-    # Convertir le DataFrame en HTML
     results_html = results_df.to_html(index=False, classes='table table-striped')
 
     return results_html
 
 
-
-def calculate_recovery_days():
+def recovery_statistics(consecutive_days):
     results = []
     tickers = query.get_ticker()
 
-    # Loop through each ticker
     for ticker in tickers:
-        # Retrieve close prices for the ticker
         close_price = query.get_price(ticker)
 
-        # Check if data is empty
         if close_price.empty:
             print(f"No data available for {ticker}")
             continue
 
-        # Ensure 'Date' column is datetime and set as index
         close_price['Date'] = pd.to_datetime(close_price['Date'])
         close_price.set_index('Date', inplace=True)
-
-        # Calculate daily percentage change
         close_price['Daily Change'] = close_price['Close'].pct_change() * 100
-
-        # Identify consecutive down days with a total drop > 1%
         close_price['Down Day'] = close_price['Daily Change'] < 0
-        close_price['Two Day Decline'] = (close_price['Down Day'] &
-                                          close_price['Down Day'].shift(1) &
-                                          (close_price['Daily Change'] + close_price['Daily Change'].shift(1) < -1))
 
-        # Display identified decline periods for debugging
-        decline_periods = close_price[close_price['Two Day Decline']]
-        print(f"\nDecline periods for {ticker[0]}:")
+        condition = (close_price['Down Day'].rolling(window=consecutive_days)
+                     .sum() == consecutive_days) & \
+                    (close_price['Daily Change'].rolling(window=consecutive_days).sum() < -1)
+        close_price['Decline Period'] = condition
+
+        decline_periods = close_price[close_price['Decline Period']]
+        print(f"\nIdentified decline periods for {ticker[0]}:")
         print(decline_periods[['Close', 'Daily Change']])
 
-        recovery_days_list = []  # List to store recovery days for each decline period
+        recovery_days_list = []
+        decline_percentage_list = []
 
-        # Analyze each two-day decline period
         for start_date in decline_periods.index:
-            start_price = close_price.loc[start_date, 'Close']
-            future_prices = close_price['Close'].loc[start_date:].sort_index()  # Sort future prices in ascending order
 
-            print(f"\nAnalyzing decline starting on {start_date} with start price {start_price} for ticker {ticker[0]}")
+            pre_decline_price_index = close_price.index.get_loc(start_date) - 1
+            if pre_decline_price_index < 0:
+                continue
 
-            # Find the first day in the future where there's a 1% recovery from the start price
+            pre_decline_price = close_price.iloc[pre_decline_price_index]['Close']
+            total_decline = ((pre_decline_price - close_price.loc[start_date, 'Close']) / pre_decline_price) * 100
+            decline_percentage_list.append(total_decline)
+
             recovery_date = None
+            future_prices = close_price['Close'].loc[start_date:]
             for future_date, future_price in future_prices.items():
-                if future_price >= start_price * 1.02:
+                if future_price >= pre_decline_price:
                     recovery_date = future_date
-                    print(f"  Recovery found on {recovery_date} with price {future_price}")
+                    print(f"Price recovered to {pre_decline_price} on {recovery_date} for ticker {ticker[0]}")
                     break
-                else:
-                    print(f"  No recovery on {future_date}: price {future_price}")
 
-            # Calculate the number of days to recovery
-            if recovery_date and recovery_date > start_date:
+            if recovery_date:
                 days_to_recovery = (recovery_date - start_date).days
                 recovery_days_list.append(days_to_recovery)
             else:
-                print(f"  No recovery within the future prices for start date {start_date}")
+                print(
+                    f"No recovery to pre-decline price found within the lookahead period after decline on {start_date}")
 
-        # Calculate average recovery days for this ticker
         if recovery_days_list:
             average_recovery_days = sum(recovery_days_list) / len(recovery_days_list)
         else:
             average_recovery_days = None
 
-        # Store the results for this ticker
+        if decline_percentage_list:
+            average_decline_percentage = sum(decline_percentage_list) / len(decline_percentage_list)
+        else:
+            average_decline_percentage = None
+
         results.append({
             'Ticker': ticker[0],
             'Average Recovery Days': average_recovery_days,
-            'Total Decline Periods': len(recovery_days_list)
+            'Average Decline Percentage': average_decline_percentage,
+            'Total Decline Periods': len(decline_percentage_list)
         })
 
-    # Convert results to DataFrame and return as HTML table
     results_df = pd.DataFrame(results)
     results_df = results_df.sort_values(by='Average Recovery Days', ascending=True)
     results_html = results_df.to_html(index=False, classes='table table-striped')
 
     return results_html
+
+
+def calculate_rebound_probability_within_days(close_prices, target_price, tolerance, days):
+    rebound_count = 0
+    no_rebound_count = 0
+    max_rebound_levels = []
+
+    for i in range(1, len(close_prices) - days):
+        if close_prices[i - 1] > target_price and abs(close_prices[i] - target_price) / target_price <= tolerance:
+            rebounded = False
+            max_rebound_level = close_prices[i]
+
+            for j in range(1, days + 1):
+                if close_prices[i + j] > close_prices[i]:
+                    rebound_count += 1
+                    rebounded = True
+
+                max_rebound_level = max(max_rebound_level, close_prices[i + j])
+
+                if rebounded:
+                    break
+
+            if not rebounded:
+                no_rebound_count += 1
+
+            max_rebound_levels.append((max_rebound_level - close_prices[i]) / close_prices[i] * 100)
+
+    total_tests = rebound_count + no_rebound_count
+    if total_tests == 0:
+        rebound_probability = None
+        no_rebound_probability = None
+        average_max_rebound = None
+    else:
+        rebound_probability = rebound_count / total_tests
+        no_rebound_probability = no_rebound_count / total_tests
+        average_max_rebound = sum(max_rebound_levels) / len(max_rebound_levels) if max_rebound_levels else None
+
+    return {
+        'Rebound Probability': rebound_probability,
+        'No Rebound Probability': no_rebound_probability,
+        'Average Max Rebound (%)': average_max_rebound,
+        'Total Tests': total_tests
+    }
+
+
+def check_rebound_probability_for_ticker(ticker, target_price, tolerance, days):
+
+    close_price = query.get_api_price(ticker)
+
+    if close_price.empty:
+        print(f"No data available for {ticker}")
+        return None
+
+    close_price['Date'] = pd.to_datetime(close_price['Date'])
+    close_price.set_index('Date', inplace=True)
+    close_prices = close_price['Close']
+
+    result = calculate_rebound_probability_within_days(close_prices, target_price, tolerance, days)
+
+    result_df = pd.DataFrame([{
+        'Ticker': ticker,
+        'Target Price': target_price,
+        'Rebound Probability (within 7 days)': result['Rebound Probability'],
+        'No Rebound Probability (within 7 days)': result['No Rebound Probability'],
+        'Average Max Rebound (%)': result['Average Max Rebound (%)'],
+        'Total Tests': result['Total Tests']
+    }])
+
+    return result_df.to_html(index=False, classes='table table-striped')

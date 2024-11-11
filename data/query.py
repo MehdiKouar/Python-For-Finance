@@ -19,3 +19,13 @@ def get_price(table_name):
     cur.close()
     data = pd.DataFrame(price_result, columns=['Date', 'Close'])
     return data
+
+
+def get_api_price(table_name):
+    cur = conn.cursor()
+    cur.execute("SELECT daily_date, close FROM " + table_name + " ORDER BY daily_date ASC")
+    price_result = cur.fetchall()
+    conn.commit()
+    cur.close()
+    data = pd.DataFrame(price_result, columns=['Date', 'Close'])
+    return data
